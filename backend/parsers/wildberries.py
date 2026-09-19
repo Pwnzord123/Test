@@ -65,8 +65,9 @@ def search(query: str, category: str, max_items: int = 100) -> list[Product]:
                 # схема формирования картинки по id товара (vol/part вычисляются из id)
                 vol = nm_id // 100000
                 part = nm_id // 1000
+                host = _resolve_basket_host(vol, part, nm_id)
                 image_url = (
-                    f"https://basket-{_basket_host(vol)}.wbbasket.ru/vol{vol}/"
+                    f"https://basket-{host}.wbbasket.ru/vol{vol}/"
                     f"part{part}/{nm_id}/images/c516x688/1.webp"
                 )
                 products.append(
@@ -93,18 +94,30 @@ def search(query: str, category: str, max_items: int = 100) -> list[Product]:
     return products
 
 
-def _basket_host(vol: int) -> str:
-    """WB раскладывает картинки по серверам basket-01..basket-24 в
-    зависимости от диапазона vol. Таблица периодически расширяется —
-    актуальные границы смотрите в любом открытом WB-парсере на GitHub."""
-    ranges = [
-        (0, 143, "01"), (144, 287, "02"), (288, 431, "03"), (432, 719, "04"),
-        (720, 1007, "05"), (1008, 1061, "06"), (1062, 1115, "07"), (1116, 1169, "08"),
-        (1170, 1313, "09"), (1314, 1601, "10"), (1602, 1655, "11"), (1656, 1919, "12"),
-        (1920, 2045, "13"), (2046, 2189, "14"), (2190, 2405, "15"), (2406, 2621, "16"),
-        (2622, 2837, "17"), (2838, 3053, "18"), (3054, 3269, "19"), (3270, 3485, "20"),
-    ]
-    for lo, hi, host in ranges:
-        if lo <= vol <= hi:
+# Какой basket-NN.wbbasket.ru обслуживает конкретный vol — не документировано
+# и периодически меняется (WB добавляет новые сервера). Вместо зашитой
+# таблицы диапазонов, которая регулярно устаревает, определяем рабочий сервер
+# пробой один раз на каждый уникальный vol и кешируем результат — так парсер
+# не ломается, когда WB в очередной раз расширяет список серверов.
+_BASKET_HOSTS = [f"{i:02d}" for i in range(1, 31)]
+_basket_host_cache: dict[int, str] = {}
+
+
+def _resolve_basket_host(vol: int, part: int, nm_id: int) -> str:
+    if vol in _basket_host_cache:
+        return _basket_host_cache[vol]
+
+    for host in _BASKET_HOSTS:
+        url = f"https://basket-{host}.wbbasket.ru/vol{vol}/part{part}/{nm_id}/images/c516x688/1.webp"
+        try:
+            resp = requests.head(url, timeout=3)
+        except requests.RequestException:
+            continue
+        if resp.status_code == 200:
+            _basket_host_cache[vol] = host
             return host
-    return "21"
+
+    # ни один сервер не отозвался — берём первый как запасной вариант,
+    # а не падаем; embed-шаг в ingest.py и так пропустит нерабочую картинку
+    _basket_host_cache[vol] = _BASKET_HOSTS[0]
+    return _BASKET_HOSTS[0]
