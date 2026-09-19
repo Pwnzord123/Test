@@ -51,7 +51,7 @@ def search(query: str, category: str, max_items: int = 100) -> list[Product]:
             resp.raise_for_status()
             data = resp.json()
 
-            items = data.get("data", {}).get("products", [])
+            items = data.get("products", [])
             if not items:
                 break
 
