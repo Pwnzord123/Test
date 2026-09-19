@@ -36,7 +36,12 @@ def main() -> None:
 
     for query, category in QUERIES:
         for parser in (wildberries, ozon):
-            products = parser.search(query, category, max_items=ITEMS_PER_QUERY)
+            parser_name = parser.__name__.split(".")[-1]
+            try:
+                products = parser.search(query, category, max_items=ITEMS_PER_QUERY)
+            except Exception as exc:
+                print(f"{parser_name}: сбой парсера на запросе '{query}', пропускаю: {exc}")
+                continue
 
             kept, vectors = [], []
             for product in products:
@@ -49,7 +54,7 @@ def main() -> None:
 
             if kept:
                 store.upsert(kept, vectors)
-                print(f"{parser.__name__.split('.')[-1]}: добавлено {len(kept)} товаров ({query})")
+                print(f"{parser_name}: добавлено {len(kept)} товаров ({query})")
 
     print(f"Готово. Всего в каталоге: {store.count()}")
 
