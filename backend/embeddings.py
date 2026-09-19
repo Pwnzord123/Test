@@ -31,5 +31,11 @@ class FashionEmbedder:
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
         inputs = self.processor(images=image, return_tensors="pt").to(self.device)
         features = self.model.get_image_features(**inputs)
+        if not torch.is_tensor(features):
+            # некоторые версии transformers оборачивают результат в объект
+            # вида BaseModelOutputWithPooling вместо голого тензора
+            features = getattr(features, "image_embeds", None)
+            if features is None:
+                features = getattr(features, "pooler_output", None)
         features = features / features.norm(p=2, dim=-1, keepdim=True)
         return features[0].cpu().tolist()
