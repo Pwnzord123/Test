@@ -10,6 +10,8 @@ Network в браузере на wildberries.ru при поиске.
 Работает без Selenium — обычный requests, что быстрее и стабильнее.
 """
 
+import time
+
 import requests
 from tqdm import tqdm
 
@@ -23,6 +25,21 @@ HEADERS = {
         "(KHTML, like Gecko) Chrome/128.0 Safari/537.36"
     )
 }
+
+DELAY_BETWEEN_PAGES_SECONDS = 1.0
+MAX_RATE_LIMIT_RETRIES = 4
+
+
+def _get_with_backoff(url: str, params: dict) -> requests.Response:
+    for attempt in range(MAX_RATE_LIMIT_RETRIES):
+        resp = requests.get(url, params=params, headers=HEADERS, timeout=15)
+        if resp.status_code != 429:
+            resp.raise_for_status()
+            return resp
+        wait = float(resp.headers.get("Retry-After", 2 * (attempt + 1)))
+        time.sleep(wait)
+    resp.raise_for_status()
+    return resp
 
 
 def search(query: str, category: str, max_items: int = 100) -> list[Product]:
@@ -47,8 +64,7 @@ def search(query: str, category: str, max_items: int = 100) -> list[Product]:
                 "spp": "30",
                 "suppressSpellcheck": "false",
             }
-            resp = requests.get(SEARCH_URL, params=params, headers=HEADERS, timeout=15)
-            resp.raise_for_status()
+            resp = _get_with_backoff(SEARCH_URL, params)
             data = resp.json()
 
             items = data.get("products", [])
@@ -90,6 +106,7 @@ def search(query: str, category: str, max_items: int = 100) -> list[Product]:
             page += 1
             if page > 20:  # защита от бесконечного цикла
                 break
+            time.sleep(DELAY_BETWEEN_PAGES_SECONDS)
 
     return products
 
@@ -99,7 +116,7 @@ def search(query: str, category: str, max_items: int = 100) -> list[Product]:
 # таблицы диапазонов, которая регулярно устаревает, определяем рабочий сервер
 # пробой один раз на каждый уникальный vol и кешируем результат — так парсер
 # не ломается, когда WB в очередной раз расширяет список серверов.
-_BASKET_HOSTS = [f"{i:02d}" for i in range(1, 31)]
+_BASKET_HOSTS = [f"{i:02d}" for i in range(1, 61)]
 _basket_host_cache: dict[int, str] = {}
 
 
