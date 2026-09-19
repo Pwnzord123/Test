@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Найти одежду по фото</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 30px auto; padding: 0 16px; }
+  #canvasWrap { position: relative; display: inline-block; margin-top: 16px; }
+  canvas { max-width: 100%; border: 1px solid #ccc; cursor: pointer; }
+  .item-list { margin: 16px 0; }
+  .item-btn { display: block; width: 100%; text-align: left; padding: 10px; margin: 6px 0;
+              border: 1px solid #ccc; border-radius: 6px; background: #fff; cursor: pointer; }
+  .item-btn.selected { border-color: #333; background: #f0f0f0; }
+  .results { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; margin-top: 20px; }
+  .card { border: 1px solid #ddd; border-radius: 8px; padding: 8px; text-decoration: none; color: inherit; }
+  .card img { width: 100%; height: 200px; object-fit: cover; border-radius: 4px; }
+  .card .title { font-size: 13px; margin: 6px 0 2px; }
+  .card .price { font-weight: bold; }
+  .card .shop { font-size: 12px; color: #777; }
+  select, button { padding: 8px 12px; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<h2>Найти одежду по фото</h2>
+<input type="file" id="fileInput" accept="image/*">
+
+<div id="canvasWrap" style="display:none;">
+  <canvas id="canvas"></canvas>
+</div>
+
+<div class="item-list" id="itemList"></div>
+
+<div id="searchControls" style="display:none;">
+  <label>Регион поиска:
+    <select id="regionSelect">
+      <option value="ru">Только РФ</option>
+      <option value="world">Весь мир</option>
+    </select>
+  </label>
+  <button id="searchBtn">Найти похожее</button>
+</div>
+
+<div class="results" id="results"></div>
+
+<script>
+const API = "http://localhost:8000";
+
+const fileInput = document.getElementById("fileInput");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const itemList = document.getElementById("itemList");
+const searchControls = document.getElementById("searchControls");
+const resultsEl = document.getElementById("results");
+
+let currentFile = null;
+let currentImage = null;
+let detectedItems = [];
+let selectedItem = null;
+
+fileInput.addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  currentFile = file;
+  resultsEl.innerHTML = "";
+  itemList.innerHTML = "Ищу предметы одежды на фото...";
+  searchControls.style.display = "none";
+
+  currentImage = await loadImage(file);
+  drawBase();
+  document.getElementById("canvasWrap").style.display = "inline-block";
+
+  const form = new FormData();
+  form.append("photo", file);
+  const resp = await fetch(`${API}/detect`, { method: "POST", body: form });
+  const data = await resp.json();
+  detectedItems = data.items;
+  renderItemList();
+});
+
+function loadImage(file) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+function drawBase() {
+  canvas.width = currentImage.width;
+  canvas.height = currentImage.height;
+  ctx.drawImage(currentImage, 0, 0);
+}
+
+function renderItemList() {
+  if (detectedItems.length === 0) {
+    itemList.innerHTML = "Не удалось распознать предметы одежды на фото.";
+    return;
+  }
+  itemList.innerHTML = "<b>Что искать?</b>";
+  detectedItems.forEach((item, idx) => {
+    const btn = document.createElement("button");
+    btn.className = "item-btn";
+    btn.textContent = item.label;
+    btn.onclick = () => selectItem(idx);
+    itemList.appendChild(btn);
+  });
+}
+
+function selectItem(idx) {
+  selectedItem = detectedItems[idx];
+  [...itemList.children].forEach((el, i) => {
+    if (el.tagName === "BUTTON") el.classList.toggle("selected", i - 1 === idx || i === idx);
+  });
+
+  drawBase();
+  const [x1, y1, x2, y2] = selectedItem.bbox;
+  ctx.strokeStyle = "red";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+
+  searchControls.style.display = "block";
+}
+
+document.getElementById("searchBtn").addEventListener("click", async () => {
+  if (!selectedItem || !currentFile) return;
+  resultsEl.innerHTML = "Ищу похожие товары...";
+
+  const [x1, y1, x2, y2] = selectedItem.bbox;
+  const form = new FormData();
+  form.append("photo", currentFile);
+  form.append("x1", x1); form.append("y1", y1);
+  form.append("x2", x2); form.append("y2", y2);
+  form.append("category", selectedItem.label);
+  form.append("region", document.getElementById("regionSelect").value);
+
+  const resp = await fetch(`${API}/search`, { method: "POST", body: form });
+  const data = await resp.json();
+  renderResults(data.results);
+});
+
+function renderResults(results) {
+  resultsEl.innerHTML = "";
+  if (!results.length) {
+    resultsEl.textContent = "Похожих товаров не найдено.";
+    return;
+  }
+  results.forEach((r) => {
+    const a = document.createElement("a");
+    a.className = "card";
+    a.href = r.url;
+    a.target = "_blank";
+    a.innerHTML = `
+      <img src="${r.image_url}" alt="${r.title}">
+      <div class="title">${r.title}</div>
+      <div class="price">${r.price} ${r.currency}</div>
+      <div class="shop">${r.shop}</div>
+    `;
+    resultsEl.appendChild(a);
+  });
+}
+</script>
+
+</body>
+</html>
